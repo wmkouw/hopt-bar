@@ -4,46 +4,60 @@ using LinearAlgebra
 using GaussianProcesses
 
 includet("ARModels.jl"); using .ARModels
-# includet("RTSSmoothers.jl"); using .RTSSmoothers
+includet("RTSSmoothers.jl"); using .RTSSmoothers
 
 
 function optGP(tsteps, signal; max_iters=1)
+
+    ll = rand()
+    lσ = rand()
     
-    kernel = Mat12Iso(rand(), rand())
+    kernel = Mat12Iso(ll, lσ)
     kmean  = MeanZero()
     gp = GP(tsteps, signal, kmean, kernel)
 
-    optimize!(gp, noise=false, domean=false, kern=true, iterations=max_iters)
+    optimize!(gp, noise=false, domean=false, kern=true, lik=false, iterations=max_iters)
 
-    return Dict(:λ => gp.kernel.ℓ, :σ => gp.kernel.σ2)
+    return Dict(:ll => log(gp.kernel.ℓ), :lσ => log(sqrt(gp.kernel.σ2)))
 end
 
-function optTGP(tsteps, signal; num_iters=1)
+function optTGP_Mat12(tsteps, signal, state0; max_iters=1)
 
-
-    model = RTSSmoother( )
-
-    for (k,t) in enumerate(tsteps)
-
-        x_k = model.buffer[:]
-        _,ppar_m[k],ppar_s[k] = ARModels.posterior_predictive(model, x_k)
-
-        # Update parameters
-        ARModels.update!(model, signal[k])
-
+    function J(hparams)
+        expλ = exp(hparams[1])
+        expσ = exp(hparams[2])
+        A = [-expλ]
+        Q = [2*expλ*expσ^2]
+        C = [1.0]
+        R = [1e-8]
+        model = RTSSmoother(A,C,Q,R,state0)
+        return log_marginal_likelihood(model,signal)
     end
-    return Dict(:μ => μs[:,end], :Λ => Λs[:,:,end], :α => αs[end], :β => βs[end])
+
+    opt = Optim.Options(g_tol = 1e-12,
+                        iterations = max_iters,
+                        store_trace = false,
+                        show_trace = false,
+                        show_warnings = true)
+    res = optimize(J, zeros(2), LBFGS(), opt)
+    mins = Optim.minimizer(res)
+
+    return Dict(:ll => mins[1], :lσ => mins[2])
 end
 
 function optAR(tsteps, signal; μ0=1.0, Λ0=[1.0], α0=2.0, β0=1/2, M=1, len_horizon=1)
 
     model = ARModel(μ0,Λ0,α0,β0, order=M, time_horizon=len_horizon)
-    for (k,t) in enumerate(tsteps)
-        ARModels.update!(model, signal[k])
+    for y_k in signal
+        ARModels.update!(model, y_k)
     end
 
-    λ_hat = (1 - model.μ[1])./Δt
-    σ_hat = sqrt( model.β./( model.α - 1 ) )
+    # Bound estimate
+    if model.μ[1] >= 1; model.μ[1] = .99999; end
 
-    return Dict(:λ => λ_hat, :σ => σ_hat)
+    # Reverting variable substitution
+    ll_hat = log(Δt./(1 - model.μ[1]))
+    lσ_hat = log( sqrt( model.β./( 2*(model.α - 1)*(1 - model.μ[1])*Δt^2 ) ) )
+
+    return Dict(:ll => ll_hat, :lσ => lσ_hat)
 end

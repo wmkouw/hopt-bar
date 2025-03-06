@@ -2,9 +2,9 @@ using Statistics
 using LinearAlgebra
 using GaussianProcesses
 
-function test_params(λ::Float64,σ::Float64, tsteps, signal)
+function test_params(ll::Float64,lσ::Float64, tsteps, signal)
 
-    kernel = Mat12Iso(λ, σ)
+    kernel = Mat12Iso(ll, lσ)
     kmean  = MeanZero()
     gp = GP(tsteps, signal, kmean, kernel)
     pp_m, pp_s = predict_y(gp, tsteps)
